@@ -1,18 +1,3 @@
-"""
-Thin wrapper around the Duffel offer_requests endpoint.
-
-Single responsibility: talk to Duffel over HTTP, return raw JSON offers.
-This file knows nothing about FlightOffer, scoring, or the agent — that
-separation is what lets normalizer.py be tested independently of network
-calls (using fixture JSON) and lets duffel_client.py be tested independently
-of parsing logic (just checking the HTTP call shape).
-
-If a second flight data provider is ever added, it gets its own
-*_client.py file with this same interface shape (search() -> list[dict]),
-and normalizer.py gains a second normalize_<provider>() function. Nothing
-else in the app changes.
-"""
-
 from __future__ import annotations
 
 import os
@@ -25,11 +10,6 @@ DUFFEL_API_VERSION = "v2"
 
 
 class DuffelClientError(Exception):
-    """Raised when Duffel returns a non-2xx response. Carries the status
-    code and parsed error body so callers can decide how to handle it
-    (e.g. the agent might want to retry or widen search params on certain
-    errors, but should fail loudly on auth errors)."""
-
     def __init__(self, status_code: int, body: dict):
         self.status_code = status_code
         self.body = body
@@ -38,12 +18,6 @@ class DuffelClientError(Exception):
 
 class DuffelClient:
     def __init__(self, api_token: Optional[str] = None):
-        """
-        api_token defaults to reading from the DUFFEL_TEST_TOKEN env var so
-        this can be instantiated as `DuffelClient()` in most call sites,
-        but still accepts an explicit token for testing with a fixture
-        token or swapping to a production token later without code changes.
-        """
         self.api_token = api_token or os.environ.get("DUFFEL_TEST_TOKEN")
         if not self.api_token:
             raise ValueError(
@@ -67,13 +41,6 @@ class DuffelClient:
         cabin_class: str = "economy",
         adults: int = 1,
     ) -> list[dict]:
-        """
-        Calls POST /air/offer_requests and returns the raw list of offer
-        dicts exactly as Duffel sends them. No transformation happens here
-        — that's normalizer.py's job.
-
-        Raises DuffelClientError on any non-2xx response.
-        """
         slices = [
             {
                 "origin": origin_iata,

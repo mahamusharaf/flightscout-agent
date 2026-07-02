@@ -1,38 +1,3 @@
-"""
-Deterministic, weighted multi-criteria scoring for FlightOffer objects.
-
-This file is intentionally LLM-free. Every score it produces is pure
-arithmetic over typed FlightOffer fields, which means:
-  - it's fully unit-testable without mocking any API or model
-  - it's fast and free to run on every offer in a batch
-  - it gives a concrete answer to "why didn't you just have the LLM rank
-    these" — determinism, cost, and reliability, with the LLM's role
-    (in explainer_tool.py, later) limited to explaining a score that was
-    already computed here, never to computing the score itself.
-
-Scoring approach, and why:
-  - Price: NOT min-max normalized against the batch's raw min/max, because
-    a single extreme outlier (e.g. a stray business-class offer) would
-    compress every normal-priced offer toward the top of the scale and
-    destroy the score's ability to discriminate between them. Instead:
-      1. Outliers above the 95th percentile are clipped before scoring,
-         so one absurd offer doesn't distort the curve for everyone else.
-      2. Price is then scored *relative to the cheapest offer in the
-         batch*, using a smooth decay curve — 1.0 at the cheapest price,
-         decreasing as the relative markup over the cheapest grows. This
-         matches how travelers actually reason ("how much more than the
-         cheapest am I paying?") rather than an arbitrary absolute scale.
-  - Layovers: diminishing penalty, not linear. Going from 0 to 1 stop is a
-    small penalty; 1 to 2+ stops drops sharply. Layover duration is a
-    secondary factor within a given stop count, not a substitute for it —
-    a short 2-stop itinerary should still score worse than a long 1-stop
-    one, because an extra connection point matters more to most travelers
-    than extra minutes sitting at one gate.
-  - Comfort: a composite of cabin class, departure time desirability, and
-    total trip duration, per the project's working definition of "comfort"
-    as a derived signal rather than a single raw field.
-"""
-
 from __future__ import annotations
 
 from app.models.enums import CabinClass, DepartureTimeBand
@@ -52,10 +17,6 @@ _PRICE_OUTLIER_PERCENTILE = 0.95
 
 
 def _percentile(values: list[float], percentile: float) -> float:
-    """
-    Simple linear-interpolation percentile, with no external dependency
-    (numpy not required for something this small). percentile is in [0, 1].
-    """
     if not values:
         raise ValueError("Cannot compute a percentile of an empty list")
     sorted_values = sorted(values)
@@ -71,13 +32,6 @@ def _percentile(values: list[float], percentile: float) -> float:
 
 
 def _clip_price_outliers(prices: list[float]) -> list[float]:
-    """
-    Clips any price above the batch's 95th percentile down to that
-    percentile value. Used only to compute a stable "cheapest in batch"
-    reference point for scoring — does not modify the actual offers, and
-    an outlier offer is still scored and shown to the user, just not
-    allowed to distort everyone else's relative-price calculation.
-    """
     if len(prices) < 5:
         # Too few offers for a percentile to be meaningful; skip clipping.
         return prices
@@ -86,20 +40,6 @@ def _clip_price_outliers(prices: list[float]) -> list[float]:
 
 
 def _score_price(price: float, cheapest_price: float, price_sensitivity: float) -> float:
-    """
-    1.0 if this offer IS the cheapest. Decays smoothly as price rises above
-    the cheapest, governed by price_sensitivity (the markup fraction at
-    which score drops to 0.5 — see ScoringWeights.price_sensitivity).
-
-    Formula: score = 1 / (1 + markup_fraction / price_sensitivity)
-    where markup_fraction = (price - cheapest_price) / cheapest_price.
-
-    This never reaches exactly 0, which is intentional — even a very
-    expensive offer might still be relevant if a user values comfort or a
-    direct route enough to outweigh price (per their weights), so price
-    score shouldn't hard-floor to zero and erase its influence in the
-    weighted sum entirely.
-    """
     if cheapest_price <= 0:
         raise ValueError(f"cheapest_price must be positive, got {cheapest_price}")
     if price_sensitivity <= 0:
@@ -130,15 +70,6 @@ _LAYOVER_DURATION_PENALTY_SCALE = 240  # minutes; controls decay steepness
 
 
 def _score_layovers(layover_count: int, total_layover_duration_minutes: int) -> float:
-    """
-    Combines stop count (primary factor, non-linear penalty) with total
-    layover duration (secondary adjustment within that stop count).
-
-    Direct flights (layover_count == 0) always score exactly 1.0 regardless
-    of total_layover_duration_minutes (which will be 0 anyway for a direct
-    flight, but this guards against a malformed offer with no stops yet a
-    nonzero layover duration from getting unfairly penalized).
-    """
     if layover_count == 0:
         return 1.0
 
@@ -212,16 +143,6 @@ def _score_comfort(offer: FlightOffer) -> float:
 def score_offers(
     offers: list[FlightOffer], weights: ScoringWeights | None = None
 ) -> list[FlightOfferScore]:
-    """
-    Scores a batch of FlightOffers together. Batching matters here (rather
-    than scoring one offer in isolation) because price scoring is relative
-    to the cheapest offer *in this batch*, and outlier clipping needs the
-    batch's price distribution to compute a percentile.
-
-    Returns one FlightOfferScore per input offer, in the same order.
-    Raises ValueError if offers is empty, since "cheapest in batch" is
-    undefined with no batch.
-    """
     if not offers:
         raise ValueError("Cannot score an empty list of offers")
 

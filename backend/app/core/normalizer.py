@@ -1,17 +1,3 @@
-"""
-Transforms raw Duffel offer dicts (as returned by duffel_client.search_offers)
-into our internal FlightOffer schema.
-
-This is the ONLY file in the app that should know Duffel's specific JSON
-shape (string amounts, ISO 8601 durations, cabin_class nested under
-segments[].passengers[]). Everything downstream — scoring.py, the agent
-tools, the API routes, the frontend — works exclusively with FlightOffer
-objects and never touches a raw Duffel dict.
-
-Confirmed against a real sandbox response (JFK->LAX, 2026-08-15, 56 offers
-across ZZ/AA/BA/IB/AS) before writing this, rather than guessing the shape.
-"""
-
 from __future__ import annotations
 
 import re
@@ -30,12 +16,6 @@ _ISO_DURATION_RE = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$")
 
 
 def parse_iso_duration_to_minutes(duration: str) -> int:
-    """
-    Converts an ISO 8601 duration string like "PT5H52M" or "P1DT7M" into
-    total minutes. Raises ValueError on a format we don't recognize, rather
-    than silently returning 0 — a silent 0-minute duration would corrupt
-    scoring without any visible error.
-    """
     match = _ISO_DURATION_RE.match(duration)
     if not match or duration == "P":
         raise ValueError(f"Unrecognized ISO 8601 duration format: {duration!r}")
@@ -48,14 +28,6 @@ def parse_iso_duration_to_minutes(duration: str) -> int:
 
 
 def _bucket_departure_time(departing_at: datetime) -> DepartureTimeBand:
-    """
-    Buckets a departure datetime into a DepartureTimeBand based on the hour
-    component, per the boundaries documented on DepartureTimeBand.
-
-    Note: departing_at from Duffel is local time at the departure airport
-    (no UTC offset in the string), so this naturally buckets by local time
-    without any timezone conversion needed.
-    """
     hour = departing_at.hour
     if 0 <= hour < 5:
         return DepartureTimeBand.RED_EYE
@@ -93,27 +65,12 @@ def _normalize_slice(raw_slice: dict) -> FlightSlice:
 
 
 def _extract_cabin_class(raw_offer: dict) -> CabinClass:
-    """
-    Cabin class isn't a top-level field on the offer — it's nested under
-    the first segment's first passenger. For our current single-adult,
-    single-cabin-class-per-search use case this is safe; if multi-passenger
-    mixed-cabin support is ever needed, this function is where that logic
-    would expand.
-    """
     first_segment = raw_offer["slices"][0]["segments"][0]
     cabin_value = first_segment["passengers"][0]["cabin_class"]
     return CabinClass(cabin_value)
 
 
 def normalize_offer(raw_offer: dict) -> FlightOffer:
-    """
-    Converts a single raw Duffel offer dict into a FlightOffer.
-
-    Raises KeyError/ValueError if the raw offer is missing an expected
-    field or has a value we can't parse — deliberately not swallowed here,
-    since a malformed offer should surface loudly rather than silently
-    produce a FlightOffer with wrong/default data that corrupts scoring.
-    """
     slices = [_normalize_slice(s) for s in raw_offer["slices"]]
 
     total_duration_minutes = sum(s.duration_minutes for s in slices)
@@ -140,13 +97,6 @@ def normalize_offer(raw_offer: dict) -> FlightOffer:
 
 
 def normalize_offers(raw_offers: list[dict]) -> list[FlightOffer]:
-    """
-    Normalizes a list of raw offers. Offers that fail to parse are skipped
-    with their error logged rather than crashing the whole batch — one
-    malformed offer out of 56 shouldn't take down the entire search, but
-    we also don't want to fail silently with zero visibility, hence the
-    print here (swap for proper logging once the app has a logger configured).
-    """
     normalized: list[FlightOffer] = []
     for raw_offer in raw_offers:
         try:

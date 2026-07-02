@@ -1,12 +1,3 @@
-"""
-Fixture data modeled directly on the real Duffel sandbox response the user
-confirmed in their test call (JFK->LAX, 2026-08-15). Used to test
-normalizer.py without needing network access or a live token.
-
-Includes one non-stop offer (AA) and one 1-stop offer (AS) to exercise both
-the single-segment and multi-segment code paths in _normalize_slice.
-"""
-
 RAW_OFFER_NONSTOP = {
     "id": "off_0000B7lq9RtkjCZRpnNsb9",
     "total_amount": "168.52",

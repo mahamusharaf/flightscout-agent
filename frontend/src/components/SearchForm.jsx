@@ -1,135 +1,72 @@
-import React, { useState } from 'react';
-import { Search, Sparkles, Sliders, Calendar, MapPin, Users, Shield } from 'lucide-react';
+import { useState } from "react";
+
+const EXAMPLES = [
+  "Cheap JFK to LAX, Aug 15, don't care about layovers",
+  "Business class London to Tokyo, comfort over price",
+  "Lahore to Dubai in two weeks, budget $400",
+];
 
 export default function SearchForm({ onSearch, isLoading }) {
-  const [formData, setFormData] = useState({
-    origin: 'JFK',
-    destination: 'LHR',
-    departure_date: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-    passengers: 1,
-    cabin_class: 'economy',
-    natural_language_query: '',
-    price_weight: 40,
-    speed_weight: 30,
-    comfort_weight: 30
-  });
+  const [query, setQuery] = useState("");
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleSubmit = (e) => {
+  function handleSubmit(e) {
     e.preventDefault();
-    const totalW = Number(formData.price_weight) + Number(formData.speed_weight) + Number(formData.comfort_weight);
-    const payload = {
-      origin: formData.origin,
-      destination: formData.destination,
-      departure_date: formData.departure_date,
-      passengers: Number(formData.passengers),
-      cabin_class: formData.cabin_class,
-      natural_language_query: formData.natural_language_query || null,
-      preferences: {
-        price_weight: Number(formData.price_weight) / totalW,
-        speed_weight: Number(formData.speed_weight) / totalW,
-        comfort_weight: Number(formData.comfort_weight) / totalW,
-        layover_tolerance: 'any'
-      }
-    };
-    onSearch(payload);
-  };
+    const q = query.trim();
+    if (!q || isLoading) return;
+    onSearch(q);
+  }
 
   return (
-    <div className="glass-card" style={{ padding: '2rem', marginBottom: '2.5rem' }}>
-      <form onSubmit={handleSubmit}>
-        {/* Natural Language Agent Query Box */}
-        <div className="nl-box" style={{ marginBottom: '1.75rem' }}>
-          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--accent)', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            <Sparkles size={16} /> AI Agent Natural Language Query (Optional)
-          </div>
-          <div style={{ position: 'relative' }}>
-            <Sparkles className="nl-icon" size={20} />
-            <input 
-              type="text"
-              name="natural_language_query"
-              placeholder="e.g., 'Find me a budget flight under $600 with no layovers departing in the morning'"
-              value={formData.natural_language_query}
-              onChange={handleChange}
-              className="nl-input"
-            />
-          </div>
-        </div>
-
-        {/* Structured Grid Form */}
-        <div className="form-grid">
-          <div className="form-group">
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><MapPin size={14} /> Origin Airport</label>
-            <input type="text" name="origin" value={formData.origin} onChange={handleChange} className="input-field" placeholder="e.g. JFK" required maxLength={3} />
-          </div>
-
-          <div className="form-group">
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><MapPin size={14} /> Destination Airport</label>
-            <input type="text" name="destination" value={formData.destination} onChange={handleChange} className="input-field" placeholder="e.g. LHR" required maxLength={3} />
-          </div>
-
-          <div className="form-group">
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Calendar size={14} /> Departure Date</label>
-            <input type="date" name="departure_date" value={formData.departure_date} onChange={handleChange} className="input-field" required />
-          </div>
-
-          <div className="form-group">
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Users size={14} /> Passengers</label>
-            <input type="number" name="passengers" min={1} max={9} value={formData.passengers} onChange={handleChange} className="input-field" required />
-          </div>
-
-          <div className="form-group">
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Shield size={14} /> Cabin Class</label>
-            <select name="cabin_class" value={formData.cabin_class} onChange={handleChange} className="select-field">
-              <option value="economy">Economy</option>
-              <option value="premium_economy">Premium Economy</option>
-              <option value="business">Business</option>
-              <option value="first">First Class</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Dynamic Preference Weight Sliders */}
-        <div className="slider-group">
-          <div className="slider-container">
-            <div className="slider-header">
-              <span>💰 Budget Weight</span>
-              <strong>{formData.price_weight}%</strong>
-            </div>
-            <input type="range" name="price_weight" min={0} max={100} value={formData.price_weight} onChange={handleChange} />
-          </div>
-
-          <div className="slider-container">
-            <div className="slider-header">
-              <span>⚡ Speed Weight</span>
-              <strong>{formData.speed_weight}%</strong>
-            </div>
-            <input type="range" name="speed_weight" min={0} max={100} value={formData.speed_weight} onChange={handleChange} />
-          </div>
-
-          <div className="slider-container">
-            <div className="slider-header">
-              <span>🛋️ Comfort Weight</span>
-              <strong>{formData.comfort_weight}%</strong>
-            </div>
-            <input type="range" name="comfort_weight" min={0} max={100} value={formData.comfort_weight} onChange={handleChange} />
-          </div>
-        </div>
-
-        <button type="submit" className="btn-primary" disabled={isLoading}>
-          {isLoading ? (
-            <>Running Agentic Agent Search...</>
-          ) : (
-            <>
-              <Search size={20} /> Scout Best Flights
-            </>
-          )}
+    <form onSubmit={handleSubmit} style={{ width: "100%", maxWidth: 760, margin: "0 auto" }}>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12,
+        background: "white", borderRadius: 12, padding: "10px 12px 10px 18px",
+        boxShadow: "0 2px 12px rgba(0,0,0,0.15)", border: "1.5px solid transparent",
+      }}>
+        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#718096" strokeWidth="2" style={{ flexShrink: 0 }}>
+          <circle cx="11" cy="11" r="8" /><path strokeLinecap="round" d="M21 21l-4.35-4.35" />
+        </svg>
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="e.g. Cheap flight from JFK to LA on Aug 15, no long layovers…"
+          disabled={isLoading}
+          style={{
+            flex: 1, border: "none", outline: "none", fontSize: 15,
+            color: "#1a1a2e", background: "transparent",
+            fontFamily: "inherit",
+          }}
+        />
+        <button
+          type="submit"
+          disabled={isLoading || !query.trim()}
+          style={{
+            flexShrink: 0, background: isLoading || !query.trim() ? "#93b4d4" : "var(--navy)",
+            color: "white", border: "none", borderRadius: 8, padding: "10px 22px",
+            fontSize: 14, fontWeight: 600, cursor: isLoading || !query.trim() ? "not-allowed" : "pointer",
+            fontFamily: "inherit", transition: "background 0.2s",
+          }}
+        >
+          {isLoading ? "Searching…" : "Search flights"}
         </button>
-      </form>
-    </div>
+      </div>
+      {!isLoading && (
+        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", justifyContent: "center" }}>
+          {EXAMPLES.map(ex => (
+            <button key={ex} type="button" onClick={() => setQuery(ex)} style={{
+              background: "rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)",
+              border: "1px solid rgba(255,255,255,0.25)", borderRadius: 20,
+              padding: "5px 14px", fontSize: 12, cursor: "pointer",
+              fontFamily: "inherit", transition: "background 0.15s",
+            }}
+              onMouseEnter={e => e.target.style.background = "rgba(255,255,255,0.25)"}
+              onMouseLeave={e => e.target.style.background = "rgba(255,255,255,0.15)"}
+            >
+              {ex}
+            </button>
+          ))}
+        </div>
+      )}
+    </form>
   );
 }

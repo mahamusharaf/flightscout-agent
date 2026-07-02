@@ -1,16 +1,8 @@
-"""
-End-to-end check of duffel_client -> normalizer -> scoring, against the
-live API. Validates that scoring.py produces sane, well-ranked results on
-real data — including the known price outlier (~€10,053) from earlier
-testing, to confirm outlier clipping is doing its job.
-
-Usage:
-    export DUFFEL_TEST_TOKEN=duffel_test_xxxxx
-    python check_scoring_e2e.py
-"""
-
 import os
 import sys
+from dotenv import load_dotenv
+
+load_dotenv()
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

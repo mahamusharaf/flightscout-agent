@@ -1,67 +1,105 @@
-from typing import Dict, Any
-from app.models.schemas import SearchRequest, SearchResponse
-from app.agent.constraint_parser import parse_natural_language_query
-from app.agent.tools.search_tool import run_flight_search
-from app.agent.tools.scoring_tool import run_flight_scoring
-from app.agent.tools.explainer_tool import generate_tradeoff_explanations
+from __future__ import annotations
 
-class FlightScoutAgent:
-    """
-    Autonomous agent executor coordinating constraint extraction, offer searching, multi-criteria scoring, and trade-off generation.
-    """
-    def execute_search(self, request: SearchRequest) -> SearchResponse:
-        # Step 1: Constraint & Preference parsing
-        parsed = parse_natural_language_query(request.natural_language_query)
-        effective_prefs = request.preferences or parsed["preferences"]
-        
-        # If NL query yielded specific preferences and request had defaults, merge them
-        if request.natural_language_query and parsed["extracted_keywords"]:
-            effective_prefs = parsed["preferences"]
+from langchain.agents import create_agent
 
-        # Step 2: Tool 1 Execution (Flight Search)
-        raw_offers = run_flight_search(
-            origin=request.origin.upper(),
-            destination=request.destination.upper(),
+from app.agent.constraint_parser import ConstraintParseError, parse_query
+from app.agent.tools.explainer_tool import explain_top_flights_tool
+from app.config import DEFAULT_MODEL_NAME
+from app.core.duffel_client import DuffelClient, DuffelClientError
+from app.core.normalizer import normalize_offers
+from app.core.scoring import score_offers
+from app.models.schemas import ScoredFlightOffer, SearchRequest
+
+_TOP_N_TO_EXPLAIN = 5
+
+_SUMMARY_SYSTEM_PROMPT = """You write a short, friendly summary introducing a list of flight \
+results to a traveler. The flights and their explanations are already finalized and correct --
+your only job is to write 1-2 introductory sentences setting up the list (e.g. mentioning the
+route and how many options were found). Do not list the flights yourself, do not restate their
+prices or explanations, and do not invent any details. The actual flight list will be displayed
+separately, right after your summary."""
+
+
+class AgentSearchError(Exception):
+    pass
+
+
+def _build_summary_agent():
+    return create_agent(
+        model=f"groq:{DEFAULT_MODEL_NAME}",
+        tools=[],
+        system_prompt=_SUMMARY_SYSTEM_PROMPT,
+    )
+
+
+def search_and_explain(request: SearchRequest) -> list[ScoredFlightOffer]:
+    client = DuffelClient()
+    try:
+        raw_offers = client.search_offers(
+            origin_iata=request.origin_iata,
+            destination_iata=request.destination_iata,
             departure_date=request.departure_date,
-            passengers=request.passengers,
-            cabin_class=request.cabin_class.value
+            return_date=request.return_date,
+            cabin_class=request.cabin_class.value,
+            adults=request.adults,
+        )
+    except DuffelClientError as e:
+        raise AgentSearchError(
+            f"Flight search failed (status {e.status_code}): {e.body}"
+        ) from e
+
+    offers = normalize_offers(raw_offers)
+    if not offers:
+        raise AgentSearchError(
+            f"No flight offers found for {request.origin_iata} -> "
+            f"{request.destination_iata} on {request.departure_date}."
         )
 
-        # Apply hard constraint filters (e.g., layover tolerance, max price)
-        filtered_offers = []
-        for offer in raw_offers:
-            if effective_prefs.max_price and offer.total_amount > effective_prefs.max_price:
-                continue
-            if effective_prefs.layover_tolerance == "direct_only" and offer.total_layovers > 0:
-                continue
-            if effective_prefs.layover_tolerance == "max_one" and offer.total_layovers > 1:
-                continue
-            filtered_offers.append(offer)
+    scores = score_offers(offers, weights=request.weights)
+    offer_by_id = {o.offer_id: o for o in offers}
+    scored = [
+        ScoredFlightOffer(offer=offer_by_id[s.offer_id], score=s) for s in scores
+    ]
+    scored.sort(key=lambda r: r.score.overall_score, reverse=True)
 
-        # If strict filtering removed all options, keep original to avoid empty results
-        final_offers_pool = filtered_offers if filtered_offers else raw_offers
-
-        # Step 3: Tool 2 Execution (Scoring & Ranking)
-        scored_offers = run_flight_scoring(final_offers_pool, effective_prefs)
-
-        # Step 4: Tool 3 Execution (Trade-off Explanations)
-        explained_offers = generate_tradeoff_explanations(scored_offers, effective_prefs)
-
-        # Formulate query summary
-        kw_str = ", ".join(parsed["extracted_keywords"]) if parsed["extracted_keywords"] else "Standard Criteria"
-        summary = f"Found {len(explained_offers)} offers from {request.origin} to {request.destination} on {request.departure_date} ({kw_str})."
-
-        return SearchResponse(
-            query_summary=summary,
-            extracted_constraints={
-                "keywords": parsed["extracted_keywords"],
-                "price_weight": effective_prefs.price_weight,
-                "speed_weight": effective_prefs.speed_weight,
-                "comfort_weight": effective_prefs.comfort_weight,
-                "layover_tolerance": effective_prefs.layover_tolerance
-            },
-            total_offers_found=len(explained_offers),
-            offers=explained_offers
+    # Direct Python call -- NOT through the agent. This is the fix for the
+    # data-fabrication bug: explain_top_flights_tool is a normal callable,
+    # we don't need an LLM to "decide" to call it or to transcribe its
+    # arguments through free text.
+    try:
+        top_results = explain_top_flights_tool.invoke(
+            {"scored_offers": scored, "top_n": _TOP_N_TO_EXPLAIN}
         )
+    except Exception as e:
+        raise AgentSearchError(f"Explanation step failed: {e}") from e
 
-agent_executor = FlightScoutAgent()
+    return top_results[:_TOP_N_TO_EXPLAIN]
+
+
+def run_flight_search(query: str) -> dict:
+    parsed_request: SearchRequest = parse_query(query)
+
+    top_results = search_and_explain(parsed_request)
+
+    summary_agent = _build_summary_agent()
+    summary_prompt = (
+        f"Write a short intro for {len(top_results)} flight results from "
+        f"{parsed_request.origin_iata} to {parsed_request.destination_iata} "
+        f"on {parsed_request.departure_date}."
+    )
+    try:
+        result = summary_agent.invoke(
+            {"messages": [{"role": "user", "content": summary_prompt}]}
+        )
+    except Exception as e:
+        raise AgentSearchError(f"Summary generation failed: {e}") from e
+
+    messages = result.get("messages", [])
+    summary = messages[-1].content if messages else ""
+
+    return {
+        "parsed_request": parsed_request,
+        "summary": summary,
+        "top_results": top_results,
+        "raw_messages": messages,
+    }

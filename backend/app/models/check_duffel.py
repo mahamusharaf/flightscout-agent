@@ -1,20 +1,10 @@
-"""
-Throwaway sanity-check script — NOT part of the final app structure.
-
-Purpose: confirm the Duffel test token works and inspect the raw shape of
-an offer_requests response before we write duffel_client.py / normalizer.py
-against assumptions.
-
-Usage:
-    export DUFFEL_TEST_TOKEN=duffel_test_xxxxx
-    python check_duffel_raw.py
-"""
-
 import json
 import os
 import sys
-
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 TOKEN = os.environ.get("DUFFEL_TEST_TOKEN")
 if not TOKEN:
