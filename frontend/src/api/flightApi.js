@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://flightscout-agent.onrender.com";
 
 export class ApiError extends Error {
   constructor(status, errorType, message, detail) {
