@@ -5,7 +5,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from app.models.enums import CabinClass, DepartureTimeBand, OfferSource
+from app.models.enums import CabinClass, DepartureTimeBand, OfferSource, LayoverTolerance
 
 
 class FlightSegment(BaseModel):
@@ -117,3 +117,10 @@ class SearchResponse(BaseModel):
     query: str
     parsed_request: SearchRequest
     results: list[ScoredFlightOffer]
+class UserPreferences(BaseModel):
+    price_weight: float = 0.33
+    speed_weight: float = 0.33
+    comfort_weight: float = 0.34
+    layover_tolerance: Optional[LayoverTolerance] = None
+    preferred_departure_time: Optional[str] = None
+    max_price: Optional[float] = None

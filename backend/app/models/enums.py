@@ -18,3 +18,7 @@ class DepartureTimeBand(str, Enum):
 
 class OfferSource(str, Enum):
     DUFFEL = "duffel"
+class LayoverTolerance(str, Enum):
+    ANY = "any"
+    MAX_ONE = "max_one"
+    DIRECT_ONLY = "direct_only"

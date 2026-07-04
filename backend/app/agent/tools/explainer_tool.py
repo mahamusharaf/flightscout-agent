@@ -58,7 +58,6 @@ def _build_chain(human_template: str):
 
 def _explain_standalone(scored: ScoredFlightOffer) -> str:
     chain = _build_chain(_STANDALONE_PROMPT)
-    first_slice = scored.offer.slices[0]
     response = chain.invoke(
         {
             "price": scored.offer.total_amount,
@@ -98,6 +97,11 @@ def _explain_comparison(
 def explain_top_flights_tool(
     scored_offers: list[ScoredFlightOffer], top_n: int = 5
 ) -> list[ScoredFlightOffer]:
+    """Generate plain-English explanations for why the top-ranked flight offers
+    scored the way they did, comparing each to the one ranked above it. Only
+    the top `top_n` offers receive an explanation; the rest are returned
+    unchanged. Does not alter scores or rankings — only adds prose explaining
+    an already-computed ranking."""
     top_offers = scored_offers[:top_n]
 
     explained: list[ScoredFlightOffer] = []
