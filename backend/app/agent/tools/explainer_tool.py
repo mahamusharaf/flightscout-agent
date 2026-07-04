@@ -1,82 +1,120 @@
-import os
-from typing import List
-from app.models.schemas import FlightOffer, UserPreferences
-from app.config import settings
+from __future__ import annotations
 
-def generate_tradeoff_explanations(offers: List[FlightOffer], preferences: UserPreferences) -> List[FlightOffer]:
-    """
-    Tool 3: Generates natural language explanations of trade-offs for each flight offer.
-    Supports LLM API calls with fallback to deterministic heuristic explanations.
-    """
-    if not offers:
-        return []
+from langchain.tools import tool
+from langchain_core.prompts import ChatPromptTemplate
 
-    min_price = min(o.total_amount for o in offers)
-    min_dur = min(o.total_duration_minutes for o in offers)
+from app.config import get_llm
+from app.models.schemas import ScoredFlightOffer
 
-    for offer in offers:
-        # Check if LLM integration is available
-        llm_explanation = None
-        if settings.OPENAI_API_KEY or settings.GROQ_API_KEY:
-            llm_explanation = _call_llm_explainer(offer, min_price, min_dur, preferences)
+_SYSTEM_PROMPT = """You explain why one flight offer ranks where it does compared to another, \
+for a traveler comparing flight deals. You are explaining a ranking that has ALREADY been \
+computed by a separate scoring system — you are not ranking or scoring anything yourself, \
+only explaining the numbers you're given in plain, natural language.
 
-        if not llm_explanation:
-            llm_explanation = _generate_heuristic_explanation(offer, min_price, min_dur, preferences)
+Be concise: 1-2 sentences. Mention the most decision-relevant difference(s) — usually price \
+and layovers/duration are what travelers care about most, with cabin class and departure time \
+as secondary factors. Don't just restate the numbers ("price is 0.85, layover is 0.7") — \
+translate them into what they mean for the traveler ("a bit pricier, but no layover").
 
-        offer.tradeoff_explanation = llm_explanation
+Do not invent any facts not present in the data given to you. Do not mention "scores" or \
+"scoring" explicitly — speak the way a knowledgeable friend would, not like a system reporting \
+its internals."""
 
-    return offers
+_COMPARISON_PROMPT = """Compare these two flights for a traveler. The first is ranked higher \
+than the second by an objective scoring system — explain why, in 1-2 sentences.
 
-def _generate_heuristic_explanation(offer: FlightOffer, min_price: float, min_dur: int, prefs: UserPreferences) -> str:
-    parts = []
-    
-    # Price analysis
-    if offer.total_amount == min_price:
-        parts.append(f"Lowest price in results at ${offer.total_amount:.0f}.")
-    else:
-        diff = offer.total_amount - min_price
-        parts.append(f"Costs ${diff:.0f} more than the cheapest option.")
+Higher-ranked flight:
+- Price: {higher_price} {currency}
+- Stops: {higher_stops}
+- Total duration: {higher_duration} minutes
+- Cabin: {higher_cabin}
+- Departs: {higher_departure_band}
 
-    # Duration and Layovers
-    if offer.total_layovers == 0:
-        parts.append("Offers a hassle-free non-stop journey.")
-    else:
-        dur_diff_hrs = (offer.total_duration_minutes - min_dur) / 60.0
-        if dur_diff_hrs > 0.1:
-            parts.append(f"Includes {offer.total_layovers} layover(s), adding ~{dur_diff_hrs:.1f}h total travel time.")
-        else:
-            parts.append(f"Includes {offer.total_layovers} layover(s) with minimal extra transit time.")
+Lower-ranked flight (being compared against):
+- Price: {lower_price} {currency}
+- Stops: {lower_stops}
+- Total duration: {lower_duration} minutes
+- Cabin: {lower_cabin}
+- Departs: {lower_departure_band}
+"""
 
-    # Alignment with preferences
-    if prefs.price_weight >= 0.5 and offer.score_breakdown and offer.score_breakdown.price_score > 80:
-        parts.append("Great alignment with your budget priority.")
-    elif prefs.speed_weight >= 0.5 and offer.score_breakdown and offer.score_breakdown.duration_score > 80:
-        parts.append("Excellent alignment with your fast travel request.")
+_STANDALONE_PROMPT = """This flight is the top-ranked result for the traveler's search. \
+Describe in 1 sentence why it's a strong option, based on this data:
+- Price: {price} {currency}
+- Stops: {stops}
+- Total duration: {duration} minutes
+- Cabin: {cabin}
+- Departs: {departure_band}
+"""
 
-    return " ".join(parts)
 
-def _call_llm_explainer(offer: FlightOffer, min_price: float, min_dur: int, prefs: UserPreferences) -> str:
-    # Optional LLM integration hook using requests
-    try:
-        import requests
-        api_key = settings.OPENAI_API_KEY or settings.GROQ_API_KEY
-        url = "https://api.openai.com/v1/chat/completions" if settings.OPENAI_API_KEY else "https://api.groq.com/openai/v1/chat/completions"
-        model = "gpt-3.5-turbo" if settings.OPENAI_API_KEY else "llama3-8b-8192"
-        
-        prompt = f"""Summarize flight trade-offs in 2 concise sentences for a user.
-Flight details: Airline={offer.airline_name}, Price=${offer.total_amount}, Layovers={offer.total_layovers}, Duration={offer.total_duration_minutes}m.
-Lowest Price available=${min_price}, Fastest Duration available={min_dur}m."""
-        
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 80,
-            "temperature": 0.5
+def _build_chain(human_template: str):
+    llm = get_llm(temperature=0.4)  # some warmth/variation in phrasing is fine here, unlike parsing
+    prompt = ChatPromptTemplate.from_messages(
+        [("system", _SYSTEM_PROMPT), ("human", human_template)]
+    )
+    return prompt | llm
+
+
+def _explain_standalone(scored: ScoredFlightOffer) -> str:
+    chain = _build_chain(_STANDALONE_PROMPT)
+    response = chain.invoke(
+        {
+            "price": scored.offer.total_amount,
+            "currency": scored.offer.total_currency,
+            "stops": scored.offer.total_layover_count,
+            "duration": scored.offer.total_duration_minutes,
+            "cabin": scored.offer.cabin_class.value,
+            "departure_band": scored.offer.departure_time_band.value,
         }
-        res = requests.post(url, json=payload, headers=headers, timeout=3)
-        if res.status_code == 200:
-            return res.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        pass
-    return None
+    )
+    return response.content.strip()
+
+
+def _explain_comparison(
+    higher: ScoredFlightOffer, lower: ScoredFlightOffer
+) -> str:
+    chain = _build_chain(_COMPARISON_PROMPT)
+    response = chain.invoke(
+        {
+            "higher_price": higher.offer.total_amount,
+            "lower_price": lower.offer.total_amount,
+            "currency": higher.offer.total_currency,
+            "higher_stops": higher.offer.total_layover_count,
+            "lower_stops": lower.offer.total_layover_count,
+            "higher_duration": higher.offer.total_duration_minutes,
+            "lower_duration": lower.offer.total_duration_minutes,
+            "higher_cabin": higher.offer.cabin_class.value,
+            "lower_cabin": lower.offer.cabin_class.value,
+            "higher_departure_band": higher.offer.departure_time_band.value,
+            "lower_departure_band": lower.offer.departure_time_band.value,
+        }
+    )
+    return response.content.strip()
+
+
+@tool
+def explain_top_flights_tool(
+    scored_offers: list[ScoredFlightOffer], top_n: int = 5
+) -> list[ScoredFlightOffer]:
+    """Generate plain-English explanations for why the top-ranked flight offers
+    scored the way they did, comparing each to the one ranked above it. Only
+    the top `top_n` offers receive an explanation; the rest are returned
+    unchanged. Does not alter scores or rankings — only adds prose explaining
+    an already-computed ranking."""
+    top_offers = scored_offers[:top_n]
+
+    explained: list[ScoredFlightOffer] = []
+    for i, scored in enumerate(top_offers):
+        if i == 0:
+            explanation = _explain_standalone(scored)
+        else:
+            explanation = _explain_comparison(higher=top_offers[i - 1], lower=scored)
+
+        scored.score.explanation = explanation
+        explained.append(scored)
+
+    # Any offers beyond top_n are returned unexplained (explanation stays
+    # None) rather than dropped — the caller may still want the full
+    # ranked list for display, just without prose for every single one.
+    return explained + scored_offers[top_n:]
