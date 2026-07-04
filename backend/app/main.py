@@ -10,7 +10,11 @@ app = FastAPI(
 
 # Vite's default dev server port. Update/extend this list once the
 # frontend has a real deployed URL.
-_ALLOWED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://flightscout-agent.vercel.app",
+]
 
 app.add_middleware(
     CORSMiddleware,
