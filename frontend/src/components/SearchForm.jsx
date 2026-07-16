@@ -2,7 +2,7 @@ import { useState } from "react";
 
 const EXAMPLES = [
   "Cheap JFK to LAX, Aug 15, don't care about layovers",
-  "Business class London to Tokyo, comfort over price",
+  "Business class flight from London to Tokyo on September 15. Prioritize comfort over price.",
   "Lahore to Dubai in two weeks, budget $400",
 ];
 
